@@ -347,7 +347,8 @@ def configure_nsswitch_database(fstore, database, services, preserve=True,
 
 
 def configure_ipa_conf(
-        fstore, cli_basedn, cli_realm, cli_domain, cli_server, hostname):
+        fstore, cli_basedn, cli_realm, cli_domain, cli_server, hostname,
+        ldaps_only=False):
     ipaconf = IPAChangeConf("IPA Installer")
     ipaconf.setOptionAssignment(" = ")
     ipaconf.setSectionNameDelimiters(("[", "]"))
@@ -373,6 +374,13 @@ def configure_ipa_conf(
                                 ipautil.format_netloc(cli_server[0]))),
         ipaconf.setOption('enable_ra', 'True')
     ]
+    if ldaps_only:
+        defopts.extend([
+            ipaconf.setOption('ldap_uri',
+                              'ldaps://{}:636'.format(
+                                  ipautil.format_netloc(cli_server[0]))),
+            ipaconf.setOption('ldaps_only', 'True')
+        ])
 
     opts.extend([
         ipaconf.setSection('global', defopts),
@@ -436,12 +444,15 @@ def configure_ldap_conf(
         ldapconf.setOption('timelimit', '15'),
         ldapconf.emptyLine(),
     ]
+    ldaps_only = getattr(options, 'ldaps_only', False)
     if not dnsok or options.force or options.on_master:
         if options.on_master:
-            opts.append(ldapconf.setOption('uri', 'ldap://localhost'))
+            uri = ('ldaps://localhost:636' if ldaps_only else 'ldap://localhost')
         else:
-            opts.append(ldapconf.setOption('uri', 'ldap://{}'.format(
-                            ipautil.format_netloc(cli_server[0]))))
+            scheme_port = ('ldaps', 636) if ldaps_only else ('ldap', None)
+            uri = '{}://{}'.format(
+                scheme_port[0], ipautil.format_netloc(cli_server[0], scheme_port[1]))
+        opts.append(ldapconf.setOption('uri', uri))
     else:
         opts.append(ldapconf.setOption('nss_srv_domain', cli_domain))
 
@@ -489,12 +500,15 @@ def configure_nslcd_conf(
         nslcdconf.emptyLine(),
     ]
 
+    ldaps_only = getattr(options, 'ldaps_only', False)
     if not dnsok or options.force or options.on_master:
         if options.on_master:
-            opts.append(nslcdconf.setOption('uri', 'ldap://localhost'))
+            uri = ('ldaps://localhost:636' if ldaps_only else 'ldap://localhost')
         else:
-            opts.append(nslcdconf.setOption('uri', 'ldap://{}'.format(
-                    ipautil.format_netloc(cli_server[0]))))
+            scheme_port = ('ldaps', 636) if ldaps_only else ('ldap', None)
+            uri = '{}://{}'.format(
+                scheme_port[0], ipautil.format_netloc(cli_server[0], scheme_port[1]))
+        opts.append(nslcdconf.setOption('uri', uri))
     else:
         opts.append(nslcdconf.setOption('uri', 'DNS'))
 
@@ -632,7 +646,7 @@ def configure_openldap_conf(fstore, cli_basedn, cli_server):
     return True
 
 
-def hardcode_ldap_server(cli_server):
+def hardcode_ldap_server(cli_server, ldaps_only=False):
     """
     DNS Discovery didn't return a valid IPA server, hardcode a value into
     the file instead.
@@ -643,9 +657,12 @@ def hardcode_ldap_server(cli_server):
     ldapconf = IPAChangeConf("IPA Installer")
     ldapconf.setOptionAssignment(" ")
 
+    if ldaps_only:
+        uri = 'ldaps://{}:636'.format(ipautil.format_netloc(cli_server[0]))
+    else:
+        uri = 'ldap://{}'.format(ipautil.format_netloc(cli_server[0]))
     opts = [
-        ldapconf.setOption('uri', 'ldap://{}'.format(
-            ipautil.format_netloc(cli_server[0]))),
+        ldapconf.setOption('uri', uri),
         ldapconf.emptyLine(),
     ]
 
@@ -1089,7 +1106,9 @@ def configure_sssd_conf(
         if options.all_ip_addresses:
             domain.set_option('dyndns_iface', '*')
         else:
-            iface = get_server_connection_interface(cli_server[0])
+            iface = get_server_connection_interface(
+                cli_server[0],
+                ldaps_only=getattr(options, 'ldaps_only', False))
             domain.set_option('dyndns_iface', iface)
     if options.krb5_offline_passwords:
         domain.set_option('krb5_store_password_if_offline', True)
@@ -1601,7 +1620,9 @@ def update_dns(server, hostname, options):
             update_ips.append(ipautil.CheckedIPAddress(ip))
     else:
         try:
-            iface = get_server_connection_interface(server)
+            iface = get_server_connection_interface(
+                server,
+                ldaps_only=getattr(options, 'ldaps_only', False))
         except RuntimeError as e:
             logger.error("Cannot update DNS records. %s", e)
             return
@@ -1702,12 +1723,15 @@ def verify_dns_update(fqdn, ips):
                                ip, target, fqdn_name)
 
 
-def get_server_connection_interface(server):
-    """Connect to IPA server, get all ip addresses of interface used to connect
+def get_server_connection_interface(server, ldaps_only=False):
+    """Connect to IPA server, get all ip addresses of interface used to connect.
+
+    When ldaps_only is True, use port 636 (LDAPS) only; otherwise use 389 (LDAP).
     """
+    port = 636 if ldaps_only else 389
     last_error = None
     for res in socket.getaddrinfo(
-            server, 389, socket.AF_UNSPEC, socket.SOCK_STREAM):
+            server, port, socket.AF_UNSPEC, socket.SOCK_STREAM):
         af, socktype, proto, _canonname, sa = res
         try:
             s = socket.socket(af, socktype, proto)
@@ -1901,16 +1925,17 @@ def update_ssh_keys(hostname, ssh_dir, options, server):
             logger.warning("Could not update DNS SSHFP records.")
 
 
-def print_port_conf_info():
+def print_port_conf_info(ldaps_only=False):
+    ldap_port = "636" if ldaps_only else "389"
     logger.info(
         "Please make sure the following ports are opened "
         "in the firewall settings:\n"
-        "     TCP: 80, 88, 389\n"
+        "     TCP: 80, 88, %s\n"
         "     UDP: 88 (at least one of TCP/UDP ports 88 has to be open)\n"
         "Also note that following ports are necessary for ipa-client "
         "working properly after enrollment:\n"
         "     TCP: 464\n"
-        "     UDP: 464, 123 (if NTP enabled)")
+        "     UDP: 464, 123 (if NTP enabled)", ldap_port)
 
 
 def cert_summary(msg, certs, indent='    '):
@@ -1929,8 +1954,8 @@ def cert_summary(msg, certs, indent='    '):
     return s
 
 
-def get_certs_from_ldap(server, base_dn, realm, ca_enabled):
-    conn = ipaldap.LDAPClient.from_hostname_plain(server)
+def get_certs_from_ldap(server, base_dn, realm, ca_enabled, ldaps_only=False):
+    conn = ipaldap.LDAPClient.from_hostname_plain(server, ldaps_only=ldaps_only)
     try:
         conn.gssapi_bind()
         certs = certstore.get_ca_certs(conn, base_dn, realm, ca_enabled)
@@ -2008,7 +2033,7 @@ def get_ca_certs_from_http(url, warn=True):
     return certs
 
 
-def get_ca_certs_from_ldap(server, basedn, realm):
+def get_ca_certs_from_ldap(server, basedn, realm, ldaps_only=False):
     """
     Retrieve th CA cert from the LDAP server by binding to the
     server with GSSAPI using the current Kerberos credentials.
@@ -2024,7 +2049,8 @@ def get_ca_certs_from_ldap(server, basedn, realm):
     logger.debug("trying to retrieve CA cert via LDAP from %s", server)
 
     try:
-        certs = get_certs_from_ldap(server, basedn, realm, False)
+        certs = get_certs_from_ldap(server, basedn, realm, False,
+                                    ldaps_only=ldaps_only)
     except Exception as e:
         logger.debug("get_ca_certs_from_ldap() error: %s", e)
         raise
@@ -2168,7 +2194,9 @@ def get_ca_certs(fstore, options, server, basedn, realm):
             # Auth with user credentials
             url = ldap_url()
             try:
-                ca_certs = get_ca_certs_from_ldap(server, basedn, realm)
+                ca_certs = get_ca_certs_from_ldap(
+                    server, basedn, realm,
+                    ldaps_only=getattr(options, 'ldaps_only', False))
                 validate_new_ca_certs(existing_ca_certs, ca_certs, interactive)
             except errors.FileError as e:
                 logger.debug("%s", e)
@@ -2526,7 +2554,8 @@ def install_check(options):
             "--dns-over-tls option.")
 
     # Create the discovery instance
-    ds = discovery.IPADiscovery()
+    ds = discovery.IPADiscovery(
+        ldaps_only=getattr(options, 'ldaps_only', False))
 
     ret = ds.search(
         domain=options.domain,
@@ -2546,7 +2575,7 @@ def install_check(options):
         logger.error(
             "This may mean that the remote server is not up "
             "or is not reachable due to network or firewall settings.")
-        print_port_conf_info()
+        print_port_conf_info(ldaps_only=getattr(options, 'ldaps_only', False))
         raise ScriptError(rval=CLIENT_INSTALL_ERROR)
 
     if ret == discovery.BAD_HOST_CONFIG:
@@ -2655,7 +2684,7 @@ def install_check(options):
 
     if ret == discovery.NOT_IPA_SERVER:
         logger.error("%s is not an IPA v2 Server.", cli_server[0])
-        print_port_conf_info()
+        print_port_conf_info(ldaps_only=getattr(options, 'ldaps_only', False))
         logger.debug("(%s: %s)", cli_server[0], cli_server_source)
         raise ScriptError(rval=CLIENT_INSTALL_ERROR)
 
@@ -2680,7 +2709,7 @@ def install_check(options):
         logger.error(
             "This may mean that the remote server is not up "
             "or is not reachable due to network or firewall settings.")
-        print_port_conf_info()
+        print_port_conf_info(ldaps_only=getattr(options, 'ldaps_only', False))
         logger.debug("(%s: %s)", cli_server[0], cli_server_source)
         raise ScriptError(rval=CLIENT_INSTALL_ERROR)
 
@@ -3035,7 +3064,7 @@ def _install(options, tdict):
                 kinit_password(principal, stdin, ccache_name,
                                config=krb_name)
             except RuntimeError as e:
-                print_port_conf_info()
+                print_port_conf_info(ldaps_only=getattr(options, 'ldaps_only', False))
                 raise ScriptError(
                     "Kerberos authentication failed: {}".format(e),
                     rval=CLIENT_INSTALL_ERROR)
@@ -3049,7 +3078,7 @@ def _install(options, tdict):
                                  config=krb_name,
                                  attempts=options.kinit_attempts)
                 except gssapi.exceptions.GSSError as e:
-                    print_port_conf_info()
+                    print_port_conf_info(ldaps_only=getattr(options, 'ldaps_only', False))
                     raise ScriptError(
                         "Kerberos authentication failed: {}".format(e),
                         rval=CLIENT_INSTALL_ERROR)
@@ -3078,7 +3107,7 @@ def _install(options, tdict):
                     pkinit_anchors=options.pkinit_anchors
                 )
             except CalledProcessError as e:
-                print_port_conf_info()
+                print_port_conf_info(ldaps_only=getattr(options, 'ldaps_only', False))
                 raise ScriptError(
                     f"Kerberos PKINIT authentication failed: {e}",
                     rval=CLIENT_INSTALL_ERROR
@@ -3152,7 +3181,7 @@ def _install(options, tdict):
                          attempts=options.kinit_attempts)
             env['KRB5CCNAME'] = os.environ['KRB5CCNAME'] = CCACHE_FILE
         except gssapi.exceptions.GSSError as e:
-            print_port_conf_info()
+            print_port_conf_info(ldaps_only=getattr(options, 'ldaps_only', False))
             logger.error("Failed to obtain host TGT: %s", e)
             # failure to get ticket makes it impossible to login and bind
             # from sssd to LDAP, abort installation and rollback changes
@@ -3161,7 +3190,8 @@ def _install(options, tdict):
     # Configure ipa.conf
     if not options.on_master:
         configure_ipa_conf(fstore, cli_basedn, cli_realm, cli_domain,
-                           cli_server, hostname)
+                           cli_server, hostname,
+                           ldaps_only=options.ldaps_only)
         logger.info("Created /etc/ipa/default.conf")
 
     with certdb.NSSDatabase() as tmp_db:
@@ -3297,8 +3327,9 @@ def _install(options, tdict):
 
     # Get CA certificates from the certificate store
     try:
-        ca_certs = get_certs_from_ldap(cli_server[0], cli_basedn, cli_realm,
-                                       ca_enabled)
+        ca_certs = get_certs_from_ldap(
+            cli_server[0], cli_basedn, cli_realm, ca_enabled,
+            ldaps_only=getattr(options, 'ldaps_only', False))
     except errors.NoCertificateError:
         if ca_enabled:
             ca_subject = DN(('CN', 'Certificate Authority'), subject_base)
@@ -3500,7 +3531,9 @@ def _install(options, tdict):
                         "configuration. Check NSS setup manually.")
 
                 try:
-                    hardcode_ldap_server(cli_server)
+                    hardcode_ldap_server(
+                        cli_server,
+                        ldaps_only=getattr(options, 'ldaps_only', False))
                 except Exception as e:
                     logger.error(
                         "Adding hardcoded server name to "
@@ -4195,6 +4228,14 @@ class ClientInstallInterface(hostname_.HostNameInstallInterface,
         description="Disable DNSSEC validation for DNS over TLS",
     )
     no_dnssec_validation = enroll_only(no_dnssec_validation)
+
+    ldaps_only = knob(
+        None,
+        description="Server uses LDAPS only (port 636). Do not use LDAP "
+                    "port 389 or STARTTLS.",
+        cli_names='--ldaps-only',
+    )
+    ldaps_only = enroll_only(ldaps_only)
 
     request_cert = knob(
         None,

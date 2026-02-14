@@ -455,8 +455,9 @@ class EPN(admintool.AdminTool):
         except Exception:
             try:
                 # LDAP + GSSAPI
+                ldaps_only = getattr(api.env, 'ldaps_only', False)
                 self._conn = ipaldap.LDAPClient.from_hostname_secure(
-                    api.env.server
+                    api.env.server, ldaps_only=ldaps_only
                 )
                 self._conn.gssapi_bind()
             except Exception as e:

@@ -113,7 +113,9 @@ def run_with_args(api, options=None):
 
     logger.info("Updating certificates from server %s", server)
 
-    ldap = ipaldap.LDAPClient.from_hostname_secure(server)
+    ldaps_only = getattr(api.env, 'ldaps_only', False)
+    ldap = ipaldap.LDAPClient.from_hostname_secure(
+        server, ldaps_only=ldaps_only)
 
     try:
         result = api.Command.ca_is_enabled(version=u'2.107')

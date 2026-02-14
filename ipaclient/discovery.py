@@ -113,12 +113,13 @@ def get_ipa_basedn(conn):
 
 class IPADiscovery:
 
-    def __init__(self):
+    def __init__(self, ldaps_only=False):
         self.realm = None
         self.domain = None
         self.server = None
         self.servers = []
         self.basedn = None
+        self.ldaps_only = ldaps_only
 
         self.realm_source = None
         self.domain_source = None
@@ -187,7 +188,11 @@ class IPADiscovery:
                 break
             tried.add(domain)
 
-            servers = self.ipadns_search_srv(domain, '_ldap._tcp', 389,
+            if self.ldaps_only:
+                srv_name, default_port = '_ldaps._tcp', 636
+            else:
+                srv_name, default_port = '_ldap._tcp', 389
+            servers = self.ipadns_search_srv(domain, srv_name, default_port,
                                              break_on_first=False)
             if servers:
                 return (servers, domain)
@@ -265,7 +270,11 @@ class IPADiscovery:
                     return NO_LDAP_SERVER
             else:
                 logger.debug("Search for LDAP SRV record in %s", domain)
-                servers = self.ipadns_search_srv(domain, '_ldap._tcp', 389,
+                if self.ldaps_only:
+                    srv_name, default_port = '_ldaps._tcp', 636
+                else:
+                    srv_name, default_port = '_ldap._tcp', 389
+                servers = self.ipadns_search_srv(domain, srv_name, default_port,
                                                  break_on_first=False)
                 if servers:
                     autodiscovered = True
@@ -413,9 +422,10 @@ class IPADiscovery:
 
         # now verify the server is really an IPA server
         try:
-            ldap_uri = ipaldap.get_ldap_uri(thost)
+            ldaps_only = getattr(self, 'ldaps_only', False)
+            ldap_uri = ipaldap.get_ldap_uri(thost, ldaps_only=ldaps_only)
             start_tls = False
-            if ca_cert_path:
+            if ca_cert_path and not ldaps_only:
                 start_tls = True
             logger.debug("Init LDAP connection to: %s", ldap_uri)
             lh = ipaldap.LDAPClient(
