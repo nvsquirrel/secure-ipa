@@ -2177,9 +2177,9 @@ class IPAMigrate():
             self.log_info("Skipping SIDGEN task in dryrun mode.")
         else:
             try:
-                cmd = ["/usr/bin/ipa config-mod --enable-sid --add-sids"]
-                result = subprocess.run(cmd, shell=True, check=True,
-                                        capture_output=True, text=True)
+                result = subprocess.run(
+                    ["/usr/bin/ipa", "config-mod", "--enable-sid", "--add-sids"],
+                    check=True, capture_output=True, text=True)
                 self.log_debug("SIDGEN task:\n" + result.stdout)
             except subprocess.CalledProcessError as e:
                 self.log_error("SIDGEN task failed: " + str(e))
@@ -2243,10 +2243,9 @@ class IPAMigrate():
 
         # Check that we have kerberos credentials
         try:
-            subprocess.run(["/usr/bin/ipa server-show "
-                            + self.local_hostname],
-                           capture_output=True,
-                           shell=True, check=True)
+            subprocess.run(
+                ["/usr/bin/ipa", "server-show", self.local_hostname],
+                capture_output=True, check=True)
         except subprocess.CalledProcessError:
             self.handle_error("Did not receive Kerberos credentials")
 
