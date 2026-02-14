@@ -818,14 +818,14 @@ class LDAPClient:
 
     @classmethod
     def from_hostname_secure(cls, hostname, cacert=paths.IPA_CA_CRT,
-                             start_tls=True, **kwargs):
+                             start_tls=True, ldaps_only=False, **kwargs):
         """Create LDAP or LDAPS connection to a remote 389-DS instance
 
         This constructor is opinionated and doesn't let you shoot yourself in
         the foot. It always creates a secure connection. By default it
         returns a LDAP connection to port 389 and performs STARTTLS using the
-        default CA cert. With start_tls=False, it creates a LDAPS connection
-        to port 636 instead.
+        default CA cert. With start_tls=False or ldaps_only=True, it creates
+        a LDAPS connection to port 636 instead.
 
         Note: Microsoft AD does not support SASL encryption and integrity
         verification with a TLS connection. For AD, use a plain connection
@@ -833,6 +833,8 @@ class LDAPClient:
         ensure data integrity and confidentiality with SSF > 1. Also see
         https://msdn.microsoft.com/en-us/library/cc223500.aspx
         """
+        if ldaps_only:
+            start_tls = False
         if start_tls:
             uri = 'ldap://%s' % format_netloc(hostname, 389)
         else:
@@ -840,16 +842,26 @@ class LDAPClient:
         return cls(uri, start_tls=start_tls, cacert=cacert, **kwargs)
 
     @classmethod
-    def from_hostname_plain(cls, hostname, **kwargs):
-        """Create a plain LDAP connection with TLS/SSL
+    def from_hostname_plain(cls, hostname, ldaps_only=False, **kwargs):
+        """Create a plain LDAP or LDAPS connection.
 
         Note: A plain TLS connection should only be used in combination with
-        GSSAPI bind.
+        GSSAPI bind. When ldaps_only is True, uses LDAPS (port 636) instead
+        of plain LDAP (port 389).
         """
         assert 'start_tls' not in kwargs
         assert 'cacert' not in kwargs
+        if ldaps_only:
+            uri = 'ldaps://%s' % format_netloc(hostname, 636)
+            return cls(uri, cacert=paths.IPA_CA_CRT, **kwargs)
         uri = 'ldap://%s' % format_netloc(hostname, 389)
         return cls(uri, **kwargs)
+
+    @classmethod
+    def from_hostname_ldaps(cls, hostname, cacert=paths.IPA_CA_CRT, **kwargs):
+        """Create an LDAPS connection to port 636 (for LDAPS-only deployments)."""
+        uri = 'ldaps://%s' % format_netloc(hostname, 636)
+        return cls(uri, start_tls=False, cacert=cacert, **kwargs)
 
     def __str__(self):
         return self.ldap_uri
@@ -1754,24 +1766,27 @@ class LDAPClient:
 
 
 def get_ldap_uri(host='', port=389, cacert=None, ldapi=False, realm=None,
-                 protocol=None):
-        if protocol is None:
-            if ldapi:
-                protocol = 'ldapi'
-            elif cacert is not None:
-                protocol = 'ldaps'
-            else:
-                protocol = 'ldap'
-
-        if protocol == 'ldaps':
-            return 'ldaps://%s' % format_netloc(host, port)
-        elif protocol == 'ldapi':
-            return 'ldapi://%%2fvar%%2frun%%2fslapd-%s.socket' % (
-                "-".join(realm.split(".")))
-        elif protocol == 'ldap':
-            return 'ldap://%s' % format_netloc(host, port)
+                 protocol=None, ldaps_only=False):
+    """Build an LDAP URI. When ldaps_only is True, use ldaps://host:636."""
+    if protocol is None:
+        if ldapi:
+            protocol = 'ldapi'
+        elif ldaps_only or cacert is not None:
+            protocol = 'ldaps'
         else:
-            raise ValueError('Protocol %r not supported' % protocol)
+            protocol = 'ldap'
+    if protocol == 'ldaps' and port == 389:
+        port = 636
+
+    if protocol == 'ldaps':
+        return 'ldaps://%s' % format_netloc(host, port)
+    elif protocol == 'ldapi':
+        return 'ldapi://%%2fvar%%2frun%%2fslapd-%s.socket' % (
+            "-".join(realm.split(".")))
+    elif protocol == 'ldap':
+        return 'ldap://%s' % format_netloc(host, port)
+    else:
+        raise ValueError('Protocol %r not supported' % protocol)
 
 
 class CacheEntry:

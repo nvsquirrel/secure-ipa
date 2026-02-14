@@ -83,7 +83,7 @@ def make_pkcs12_info(directory, cert_name, password_name):
 
 def install_replica_ds(config, options, ca_is_configured, remote_api,
                        ca_file, pkcs12_info=None, fstore=None):
-    dsinstance.check_ports()
+    dsinstance.check_ports(ldaps_only=options.ldaps_only)
 
     # if we have a pkcs12 file, create the cert db from
     # that. Otherwise the ds setup will create the CA
@@ -99,7 +99,8 @@ def install_replica_ds(config, options, ca_is_configured, remote_api,
 
     ds = dsinstance.DsInstance(
         config_ldif=options.dirsrv_config_file,
-        fstore=fstore)
+        fstore=fstore,
+        ldaps_only=options.ldaps_only)
     ds.create_replica(
         realm_name=config.realm_name,
         master_fqdn=config.master_host_name,
@@ -218,6 +219,9 @@ def create_ipa_conf(fstore, config, ca_enabled, master=None):
         ipaconf.setOption('mode', 'production')
     ]
 
+    if getattr(config, 'ldaps_only', False):
+        gopts.append(ipaconf.setOption('ldaps_only', 'True'))
+
     if ca_enabled:
         gopts.extend([
             ipaconf.setOption('enable_ra', 'True'),
@@ -244,13 +248,17 @@ def create_ipa_conf(fstore, config, ca_enabled, master=None):
     os.chmod(target_fname, 0o644)
 
 
-def check_dirsrv():
-    (ds_unsecure, ds_secure) = dsinstance.check_ports()
+def check_dirsrv(ldaps_only=False):
+    (ds_unsecure, ds_secure) = dsinstance.check_ports(ldaps_only=ldaps_only)
     if not ds_unsecure or not ds_secure:
-        msg = ("IPA requires ports 389 and 636 for the Directory Server.\n"
-               "These are currently in use:\n")
-        if not ds_unsecure:
-            msg += "\t389\n"
+        if ldaps_only:
+            msg = ("IPA requires port 636 for the Directory Server (LDAPS).\n"
+                   "This port is currently in use.\n")
+        else:
+            msg = ("IPA requires ports 389 and 636 for the Directory Server.\n"
+                   "These are currently in use:\n")
+            if not ds_unsecure:
+                msg += "\t389\n"
         if not ds_secure:
             msg += "\t636\n"
         raise ScriptError(msg)
@@ -572,7 +580,7 @@ def common_check(no_ntp, skip_mem_check, setup_ca):
             "If you want to reinstall the IPA server, please uninstall "
             "it first using 'ipa-server-install --uninstall'.")
 
-    check_dirsrv()
+    check_dirsrv(ldaps_only=options.ldaps_only)
 
     if not no_ntp:
         try:
@@ -907,7 +915,8 @@ def promote_check(installer):
         # default to ca_host from IPA config
         config.ca_host_name = api.env.ca_host
     config.kra_host_name = config.ca_host_name
-    config.ca_ds_port = 389
+    config.ca_ds_port = 636 if options.ldaps_only else 389
+    config.ldaps_only = options.ldaps_only
     config.setup_ca = options.setup_ca
     config.setup_kra = options.setup_kra
     config.dir = installer._top_dir
@@ -1021,7 +1030,8 @@ def promote_check(installer):
         # Try out authentication
         conn.connect(ccache=ccache)
         replman = ReplicationManager(config.realm_name,
-                                     config.master_host_name, None)
+                                     config.master_host_name, None,
+                                     ldaps_only=options.ldaps_only)
 
         promotion_check_ipa_domain(conn, remote_api.env.basedn)
         hostdn = DN(('fqdn', api.env.host),
@@ -1268,9 +1278,9 @@ def promote_check(installer):
         try:
             replica_conn_check(
                 config.master_host_name, config.host_name, config.realm_name,
-                options.setup_ca, 389,
+                options.setup_ca, 636 if options.ldaps_only else 389,
                 options.admin_password, principal=options.principal,
-                ca_cert_file=paths.IPA_CA_CRT)
+                ca_cert_file=paths.IPA_CA_CRT, ldaps_only=options.ldaps_only)
         finally:
             if add_to_ipaservers:
                 os.environ['KRB5CCNAME'] = ccache

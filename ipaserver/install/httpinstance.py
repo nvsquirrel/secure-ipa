@@ -586,9 +586,11 @@ class HTTPInstance(service.Service):
                             api.env.container_service,
                             self.suffix)
 
-            ldap_uri = ipaldap.get_ldap_uri(self.master_fqdn)
+            ldaps_only = getattr(api.env, 'ldaps_only', False)
+            ldap_uri = ipaldap.get_ldap_uri(
+                self.master_fqdn, ldaps_only=ldaps_only)
             with ipaldap.LDAPClient(ldap_uri,
-                                    start_tls=not self.promote,
+                                    start_tls=not self.promote and not ldaps_only,
                                     cacert=paths.IPA_CA_CRT) as remote_ldap:
                 if self.promote:
                     remote_ldap.gssapi_bind()

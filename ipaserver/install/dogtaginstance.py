@@ -825,8 +825,9 @@ class DogtagInstance(service.Service):
             self.admin_password = result
 
         # Now wait until the other server gets replicated this data
+        ldaps_only = getattr(api.env, 'ldaps_only', False)
         master_conn = ipaldap.LDAPClient.from_hostname_secure(
-            self.master_host
+            self.master_host, ldaps_only=ldaps_only
         )
         logger.debug(
             "Waiting %s seconds for %s to appear on %s",
@@ -958,6 +959,13 @@ class DogtagInstance(service.Service):
 
     def _configure_clone(self, subsystem_config, security_domain_hostname,
                          clone_pkcs12_path):
+        # LDAPS-only: use SSL and port 636 for both master and clone
+        if self.master_replication_port == 636:
+            clone_replication_security = "SSL"
+            clone_port = 636
+        else:
+            clone_replication_security = "TLS"
+            clone_port = 389
         subsystem_config.update(
             # Security domain registration
             pki_security_domain_hostname=security_domain_hostname,
@@ -966,9 +974,9 @@ class DogtagInstance(service.Service):
             pki_security_domain_password=self.admin_password,
             # Clone
             pki_clone=True,
-            pki_clone_replication_security="TLS",
+            pki_clone_replication_security=clone_replication_security,
             pki_clone_replication_master_port=self.master_replication_port,
-            pki_clone_replication_clone_port=389,
+            pki_clone_replication_clone_port=clone_port,
             pki_clone_replicate_schema=False,
             pki_clone_uri="https://%s" % ipautil.format_netloc(
                 self.master_host, 443),

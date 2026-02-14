@@ -660,7 +660,10 @@ class Env:
 
         # Derive ldap_uri from server
         if 'ldap_uri' not in self and 'server' in self:
-            self.ldap_uri = 'ldap://{}'.format(self.server)
+            if self.get('ldaps_only'):
+                self.ldap_uri = 'ldaps://{}:636'.format(self.server)
+            else:
+                self.ldap_uri = 'ldap://{}'.format(self.server)
 
         # Derive jsonrpc_uri from xmlrpc_uri
         if 'jsonrpc_uri' not in self:

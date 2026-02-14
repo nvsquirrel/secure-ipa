@@ -27,6 +27,7 @@ import tempfile
 import fnmatch
 
 from lib389 import DirSrv
+from lib389.config import Config
 from lib389.idm.ipadomain import IpaDomain
 from lib389.instance.options import General2Base, Slapd2Base
 from lib389.instance.remove import remove_ds_instance as lib389_remove_ds
@@ -145,14 +146,18 @@ def get_ds_instances():
     instances.sort()
     return instances
 
-def check_ports():
+def check_ports(ldaps_only=False):
     """
-    Check of Directory server ports are open.
+    Check if Directory server ports are open.
 
     Returns a tuple with two booleans, one for unsecure port 389 and one for
     secure port 636. True means that the port is free, False means that the
-    port is taken.
+    port is taken. When ldaps_only is True, only 636 is checked (389 is
+    treated as free).
     """
+    if ldaps_only:
+        ds_secure = not ipautil.host_port_open(None, 636)
+        return (True, ds_secure)  # Only 636 matters
     ds_unsecure = not ipautil.host_port_open(None, 389)
     ds_secure = not ipautil.host_port_open(None, 636)
     return (ds_unsecure, ds_secure)
@@ -187,7 +192,7 @@ def get_all_external_schema_files(root):
 
 class DsInstance(service.Service):
     def __init__(self, realm_name=None, domain_name=None, fstore=None,
-                 domainlevel=None, config_ldif=None):
+                 domainlevel=None, config_ldif=None, ldaps_only=False):
         super(DsInstance, self).__init__(
             "dirsrv",
             service_desc="directory server",
@@ -213,6 +218,7 @@ class DsInstance(service.Service):
         self.run_init_memberof = True
         self.config_ldif = config_ldif  # updates for dse.ldif
         self.domainlevel = domainlevel
+        self.ldaps_only = ldaps_only
         if realm_name:
             self.suffix = ipautil.realm_to_suffix(self.realm)
             self.serverid = ipaldap.realm_to_serverid(self.realm)
@@ -338,6 +344,9 @@ class DsInstance(service.Service):
             self.step("importing CA certificates from LDAP",
                       self.__import_ca_certs)
         self.step("restarting directory server", self.__restart_instance)
+        if self.ldaps_only:
+            self.step("disabling LDAP port (LDAPS only)", self.__disable_plaintext_port)
+            self.step("restarting directory server", self.__restart_instance)
 
         self.start_creation()
 
@@ -436,7 +445,8 @@ class DsInstance(service.Service):
             self.master_fqdn,
             r_binddn=bind_dn,
             r_bindpw=bind_pw,
-            cacert=self.ca_file
+            cacert=self.ca_file,
+            ldaps_only=self.ldaps_only
         )
         self.run_init_memberof = repl.needs_memberof_fixup()
 
@@ -446,7 +456,8 @@ class DsInstance(service.Service):
             self.master_fqdn,
             r_binddn=bind_dn,
             r_bindpw=bind_pw,
-            cacert=self.ca_file
+            cacert=self.ca_file,
+            ldaps_only=self.ldaps_only
         )
 
     def __configure_sasl_mappings(self):
@@ -686,6 +697,20 @@ class DsInstance(service.Service):
 
     def __restart_instance(self):
         self.restart(self.serverid)
+
+    def __disable_plaintext_port(self):
+        """Disable the LDAP port (389) so the instance listens only on LDAPS."""
+        inst = DirSrv(verbose=True, external_log=logger)
+        inst.local_simple_allocate(
+            serverid=self.serverid,
+            ldapuri=ipaldap.get_ldap_uri(realm=self.realm, protocol='ldapi'),
+        )
+        inst.open()
+        try:
+            config = Config(inst)
+            config.disable_plaintext_port()
+        finally:
+            inst.close()
 
     def __enable_entryusn(self):
         self._ldap_mod("entryusn.ldif")
@@ -1059,10 +1084,17 @@ class DsInstance(service.Service):
             admpwdfile.write(password)
             admpwdfile.flush()
 
-            args = [paths.LDAPPASSWD, "-H", "ldap://{}".format(self.fqdn),
-                    "-ZZ", "-x", "-D", str(DN(('cn', 'Directory Manager'))),
+            if self.ldaps_only:
+                ldap_uri = "ldaps://{}:636".format(self.fqdn)
+                starttls_opt = []
+            else:
+                ldap_uri = "ldap://{}".format(self.fqdn)
+                starttls_opt = ["-ZZ"]
+            args = [paths.LDAPPASSWD, "-H", ldap_uri,
+                    "-x", "-D", str(DN(('cn', 'Directory Manager'))),
                     "-y", dmpwdfile.name, "-T", admpwdfile.name,
                     str(DN(('uid', 'admin'), ('cn', 'users'), ('cn', 'accounts'), self.suffix))]
+            args[2:2] = starttls_opt
             try:
                 env = {'LDAPTLS_CACERTDIR': os.path.dirname(paths.IPA_CA_CRT),
                        'LDAPTLS_CACERT': paths.IPA_CA_CRT}

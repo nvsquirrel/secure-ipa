@@ -1293,14 +1293,16 @@ class CAInstance(DogtagInstance):
 
     def __setup_replication(self):
         repl = replication.CAReplicationManager(self.realm, self.fqdn)
-        repl.setup_cs_replication(self.master_host)
+        ldaps_only = getattr(api.env, 'ldaps_only', False)
+        repl.setup_cs_replication(self.master_host, ldaps_only=ldaps_only)
 
         # Activate Topology for o=ipaca segments
         self.__update_topology()
 
     def finalize_replica_config(self):
         repl = replication.CAReplicationManager(self.realm, self.fqdn)
-        repl.finalize_replica_config(self.master_host)
+        ldaps_only = getattr(api.env, 'ldaps_only', False)
+        repl.finalize_replica_config(self.master_host, ldaps_only=ldaps_only)
 
     def __enable_instance(self):
         basedn = ipautil.realm_to_suffix(self.realm)

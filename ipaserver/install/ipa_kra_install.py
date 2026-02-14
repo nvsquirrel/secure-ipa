@@ -205,7 +205,7 @@ class KRAInstaller(KRAInstall):
             config.host_name = api.env.host
             config.domain_name = api.env.domain
             config.dirman_password = self.options.password
-            config.ca_ds_port = 389
+            config.ca_ds_port = 636 if getattr(api.env, 'ldaps_only', False) else 389
             config.top_dir = tempfile.mkdtemp("ipa")
             config.dir = config.top_dir
 

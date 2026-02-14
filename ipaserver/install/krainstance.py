@@ -86,7 +86,7 @@ class KRAInstance(DogtagInstance):
                            admin_password, pkcs12_info=None, master_host=None,
                            subject_base=None, ca_subject=None,
                            promote=False, pki_config_override=None,
-                           token_password=None):
+                           token_password=None, master_replication_port=389):
         """Create a KRA instance.
 
            To create a clone, pass in pkcs12_info.
@@ -99,6 +99,7 @@ class KRAInstance(DogtagInstance):
         if self.pkcs12_info is not None or promote:
             self.clone = True
         self.master_host = master_host
+        self.master_replication_port = master_replication_port
         self.pki_config_override = pki_config_override
         # The remaining token values are available via sysrestore
         self.token_password = token_password
@@ -167,6 +168,8 @@ class KRAInstance(DogtagInstance):
         cfg = dict(
             pki_issuing_ca_uri="https://{}".format(
                 ipautil.format_netloc(self.fqdn, 443)),
+            # LDAPS-only replica: DS only listens on 636
+            pki_ds_secure_connection=(self.master_replication_port == 636),
             # Client security database
             pki_client_database_dir=self.tmp_agent_db,
             pki_client_database_password=tmp_agent_pwd,

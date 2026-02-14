@@ -570,7 +570,7 @@ def install_step_0(standalone, replica_config, options, custodia):
 
         pkcs12_info = None
         master_host = None
-        master_replication_port = None
+        master_replication_port = 636 if getattr(options, 'ldaps_only', False) else None
         ra_p12 = None
         ra_only = False
         promote = False
@@ -609,7 +609,9 @@ def install_step_0(standalone, replica_config, options, custodia):
 
     # use secure ldaps when installing a replica or upgrading to CA-ful
     # In both cases, 389-DS is already configured to have a trusted cert.
-    use_ldaps = standalone or replica_config is not None
+    # With --ldaps-only, DS is only on 636 so CA must use LDAPS.
+    use_ldaps = (standalone or replica_config is not None or
+                 getattr(options, 'ldaps_only', False))
 
     ca = cainstance.CAInstance(
         realm=realm_name, host_name=host_name, custodia=custodia

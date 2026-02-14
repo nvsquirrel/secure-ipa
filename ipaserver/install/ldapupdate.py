@@ -134,8 +134,9 @@ def connect(ldapi=False, realm=None, fqdn=None):
     if ldapi:
         conn = ipaldap.LDAPClient.from_realm(realm, decode_attrs=False)
     else:
+        ldaps_only = getattr(api.env, 'ldaps_only', False)
         conn = ipaldap.LDAPClient.from_hostname_secure(
-            fqdn, decode_attrs=False
+            fqdn, decode_attrs=False, ldaps_only=ldaps_only
         )
     try:
         if os.getegid() == 0:

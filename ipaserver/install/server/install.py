@@ -258,13 +258,17 @@ def read_admin_password():
     return admin_password
 
 
-def check_dirsrv(unattended):
-    (ds_unsecure, ds_secure) = dsinstance.check_ports()
+def check_dirsrv(unattended, ldaps_only=False):
+    (ds_unsecure, ds_secure) = dsinstance.check_ports(ldaps_only=ldaps_only)
     if not ds_unsecure or not ds_secure:
-        msg = ("IPA requires ports 389 and 636 for the Directory Server.\n"
-               "These are currently in use:\n")
-        if not ds_unsecure:
-            msg += "\t389\n"
+        if ldaps_only:
+            msg = ("IPA requires port 636 for the Directory Server (LDAPS).\n"
+                   "This port is currently in use.\n")
+        else:
+            msg = ("IPA requires ports 389 and 636 for the Directory Server.\n"
+                   "These are currently in use:\n")
+            if not ds_unsecure:
+                msg += "\t389\n"
         if not ds_secure:
             msg += "\t636\n"
         raise ScriptError(msg)
@@ -491,7 +495,7 @@ def install_check(installer):
 
     if not options.external_cert_files:
         # Make sure the 389-ds ports are available
-        check_dirsrv(not installer.interactive)
+        check_dirsrv(not installer.interactive, ldaps_only=options.ldaps_only)
 
     if not options.no_ntp:
         try:
@@ -708,6 +712,9 @@ def install_check(installer):
         ipaconf.setOption('mode', 'production')
     ]
 
+    if options.ldaps_only:
+        gopts.append(ipaconf.setOption('ldaps_only', 'True'))
+
     if setup_ca:
         gopts.extend([
             ipaconf.setOption('enable_ra', 'True'),
@@ -899,7 +906,8 @@ def install(installer):
         if options.dirsrv_cert_files:
             ds = dsinstance.DsInstance(fstore=fstore,
                                        domainlevel=options.domainlevel,
-                                       config_ldif=options.dirsrv_config_file)
+                                       config_ldif=options.dirsrv_config_file,
+                                       ldaps_only=options.ldaps_only)
             installer._ds = ds
             ds.create_instance(realm_name, host_name, domain_name,
                                dm_password, dirsrv_pkcs12_info,
@@ -911,7 +919,8 @@ def install(installer):
         else:
             ds = dsinstance.DsInstance(fstore=fstore,
                                        domainlevel=options.domainlevel,
-                                       config_ldif=options.dirsrv_config_file)
+                                       config_ldif=options.dirsrv_config_file,
+                                       ldaps_only=options.ldaps_only)
             installer._ds = ds
             ds.create_instance(realm_name, host_name, domain_name,
                                dm_password,
@@ -924,7 +933,8 @@ def install(installer):
     else:
         api.Backend.ldap2.connect()
         ds = dsinstance.DsInstance(fstore=fstore,
-                                   domainlevel=options.domainlevel)
+                                   domainlevel=options.domainlevel,
+                                   ldaps_only=options.ldaps_only)
         installer._ds = ds
         ds.init_info(
             realm_name, host_name, domain_name, dm_password,
@@ -1093,7 +1103,10 @@ def install(installer):
     print("\t1. You must make sure these network ports are open:")
     print("\t\tTCP Ports:")
     print("\t\t  * 80, 443: HTTP/HTTPS")
-    print("\t\t  * 389, 636: LDAP/LDAPS")
+    if options.ldaps_only:
+        print("\t\t  * 636: LDAPS")
+    else:
+        print("\t\t  * 389, 636: LDAP/LDAPS")
     print("\t\t  * 88, 464: kerberos")
     if options.dns_over_tls and options.dns_policy == "enforced":
         dns_port = "853"

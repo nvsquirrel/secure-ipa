@@ -1308,7 +1308,9 @@ class user_status(LDAPQuery):
                 other_ldap = self.obj.backend
             else:
                 try:
-                    other_ldap = LDAPClient(ldap_uri='ldap://%s' % host)
+                    ldaps_only = getattr(api.env, 'ldaps_only', False)
+                    other_ldap = LDAPClient.from_hostname_secure(
+                        host, ldaps_only=ldaps_only)
                     other_ldap.gssapi_bind()
                 except Exception as e:
                     logger.error("user_status: Connecting to %s failed with "

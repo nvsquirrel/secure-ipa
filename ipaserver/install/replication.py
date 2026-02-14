@@ -95,7 +95,7 @@ REPLICA_FINAL_SETTINGS = {
 
 def replica_conn_check(master_host, host_name, realm, check_ca,
                        dogtag_master_ds_port, admin_password=None,
-                       principal="admin", ca_cert_file=None):
+                       principal="admin", ca_cert_file=None, ldaps_only=False):
     """
     Check the ports used by the replica both locally and remotely to be sure
     that replication will work.
@@ -106,17 +106,20 @@ def replica_conn_check(master_host, host_name, realm, check_ca,
     args = [paths.IPA_REPLICA_CONNCHECK, "--master", master_host,
             "--auto-master-check", "--realm", realm,
             "--hostname", host_name]
-    nolog=tuple()
+    nolog = tuple()
 
     if principal is not None:
         args.extend(["--principal", principal])
 
     if admin_password:
         args.extend(["--password", admin_password])
-        nolog=(admin_password,)
+        nolog = (admin_password,)
 
     if check_ca and dogtag_master_ds_port == 7389:
         args.append('--check-ca')
+
+    if ldaps_only:
+        args.append('--ldaps-only')
 
     if ca_cert_file:
         args.extend(["--ca-cert-file", ca_cert_file])
@@ -239,13 +242,16 @@ class ReplicationManager:
     between DS servers, and sync  agreements with Windows servers
     """
 
-    def __init__(self, realm, hostname, dirman_passwd=None, port=PORT,
-                 starttls=False, conn=None):
+    def __init__(self, realm, hostname, dirman_passwd=None, port=DEFAULT_PORT,
+                 starttls=False, conn=None, ldaps_only=False):
         self.hostname = hostname
+        self.ldaps_only = ldaps_only
+        if ldaps_only:
+            port = 636
         self.port = port
         self.dirman_passwd = dirman_passwd
         self.realm = realm
-        self.starttls = starttls
+        self.starttls = starttls and not ldaps_only
         self.suffix = ipautil.realm_to_suffix(realm)
         self.need_memberof_fixup = False
         self.db_suffix = self.suffix
@@ -256,11 +262,15 @@ class ReplicationManager:
         if conn is None:
             # If we are passed a password we'll use it as the DM password
             # otherwise we'll do a GSSAPI bind.
-            protocol = 'ldap' if starttls else None
-            ldap_uri = ipaldap.get_ldap_uri(
-                hostname, port, protocol=protocol, cacert=paths.IPA_CA_CRT)
-            self.conn = ipaldap.LDAPClient(ldap_uri, cacert=paths.IPA_CA_CRT,
-                                           start_tls=starttls)
+            if ldaps_only:
+                self.conn = ipaldap.LDAPClient.from_hostname_secure(
+                    hostname, ldaps_only=True)
+            else:
+                protocol = 'ldap' if starttls else None
+                ldap_uri = ipaldap.get_ldap_uri(
+                    hostname, port, protocol=protocol, cacert=paths.IPA_CA_CRT)
+                self.conn = ipaldap.LDAPClient(ldap_uri, cacert=paths.IPA_CA_CRT,
+                                               start_tls=starttls)
             if dirman_passwd:
                 self.conn.simple_bind(bind_dn=ipaldap.DIRMAN_DN,
                                       bind_password=dirman_passwd)
@@ -643,7 +653,8 @@ class ReplicationManager:
             pass
 
     def finalize_replica_config(self, r_hostname, r_binddn=None,
-                                r_bindpw=None, cacert=paths.IPA_CA_CRT):
+                                r_bindpw=None, cacert=paths.IPA_CA_CRT,
+                                ldaps_only=False):
         """Apply final cn=replica settings
 
         replica_config() sets several attribute to fast cache invalidation
@@ -660,7 +671,7 @@ class ReplicationManager:
         self._finalize_replica_settings(self.conn)
 
         r_conn = ipaldap.LDAPClient.from_hostname_secure(
-            r_hostname, cacert=cacert
+            r_hostname, cacert=cacert, ldaps_only=ldaps_only
         )
         if r_bindpw:
             r_conn.simple_bind(r_binddn, r_bindpw)
@@ -841,7 +852,7 @@ class ReplicationManager:
     def setup_agreement(self, a_conn, b_hostname, port=389,
                         repl_man_dn=None, repl_man_passwd=None,
                         iswinsync=False, win_subtree=None, isgssapi=False,
-                        master=None):
+                        master=None, ldaps_only=False):
         """
         master is used to determine which side of the agreement we are
         creating. This is only needed for dogtag replication agreements
@@ -851,6 +862,9 @@ class ReplicationManager:
 
         if repl_man_dn is not None:
             assert isinstance(repl_man_dn, DN)
+
+        if ldaps_only:
+            port = 636
 
         cn, dn = self.agreement_dn(b_hostname, master=master)
         try:
@@ -872,7 +886,15 @@ class ReplicationManager:
         if master is None:
             entry['nsDS5ReplicatedAttributeList'] = [
                 '(objectclass=*) $ EXCLUDE %s' % " ".join(EXCLUDES)]
-        if isgssapi:
+        if ldaps_only:
+            entry['nsds5replicatransportinfo'] = ['SSL']
+            if isgssapi:
+                entry['nsds5replicabindmethod'] = ['SASL/GSSAPI']
+            else:
+                entry['nsds5replicabinddn'] = [repl_man_dn]
+                entry['nsds5replicacredentials'] = [repl_man_passwd]
+                entry['nsds5replicabindmethod'] = ['simple']
+        elif isgssapi:
             entry['nsds5replicatransportinfo'] = ['LDAP']
             entry['nsds5replicabindmethod'] = ['SASL/GSSAPI']
         else:
@@ -1051,10 +1073,11 @@ class ReplicationManager:
     def delete_referral(self, hostname):
         dn = DN(('cn', self.db_suffix),
                 ('cn', 'mapping tree'), ('cn', 'config'))
-        # TODO: should we detect proto/port somehow ?
+        port = 636 if self.ldaps_only else 389
+        proto = 'ldaps' if self.ldaps_only else 'ldap'
         mod = [(ldap.MOD_DELETE, 'nsslapd-referral',
-                'ldap://%s/%s' % (ipautil.format_netloc(hostname, 389),
-                                  self.db_suffix))]
+                '%s://%s/%s' % (proto, ipautil.format_netloc(hostname, port),
+                                self.db_suffix))]
 
         try:
             self.conn.modify_s(dn, mod)
@@ -1224,13 +1247,18 @@ class ReplicationManager:
 
     def setup_replication(self, r_hostname, r_port=389, r_sslport=636,
                           r_binddn=None, r_bindpw=None,
-                          is_cs_replica=False, local_port=None):
+                          is_cs_replica=False, local_port=None,
+                          ldaps_only=False):
         assert isinstance(r_binddn, DN)
-        if local_port is None:
+        if ldaps_only:
+            r_port = 636
+            local_port = 636
+        elif local_port is None:
             local_port = r_port
         # note - there appears to be a bug in python-ldap - it does not
         # allow connections using two different CA certs
-        r_conn = ipaldap.LDAPClient.from_hostname_secure(r_hostname)
+        r_conn = ipaldap.LDAPClient.from_hostname_secure(
+            r_hostname, ldaps_only=ldaps_only)
 
         if r_bindpw:
             r_conn.simple_bind(r_binddn, r_bindpw)
@@ -1251,18 +1279,20 @@ class ReplicationManager:
             self.setup_agreement(r_conn, self.hostname, port=local_port,
                                  repl_man_dn=self.repl_man_dn,
                                  repl_man_passwd=self.repl_man_passwd,
-                                 master=False)
+                                 master=False, ldaps_only=ldaps_only)
             self.setup_agreement(self.conn, r_hostname, port=r_port,
                                  repl_man_dn=self.repl_man_dn,
                                  repl_man_passwd=self.repl_man_passwd,
-                                 master=True)
+                                 master=True, ldaps_only=ldaps_only)
         else:
             self.setup_agreement(r_conn, self.hostname, port=local_port,
                                  repl_man_dn=self.repl_man_dn,
-                                 repl_man_passwd=self.repl_man_passwd)
+                                 repl_man_passwd=self.repl_man_passwd,
+                                 ldaps_only=ldaps_only)
             self.setup_agreement(self.conn, r_hostname, port=r_port,
                                  repl_man_dn=self.repl_man_dn,
-                                 repl_man_passwd=self.repl_man_passwd)
+                                 repl_man_passwd=self.repl_man_passwd,
+                                 ldaps_only=ldaps_only)
 
         #Finally start replication
         ret = self.start_replication(r_conn, master=False)
@@ -1380,8 +1410,10 @@ class ReplicationManager:
         if ret != 0:
             raise RuntimeError("Failed to start replication")
 
-    def convert_to_gssapi_replication(self, r_hostname, r_binddn, r_bindpw):
-        r_conn = ipaldap.LDAPClient.from_hostname_secure(r_hostname)
+    def convert_to_gssapi_replication(self, r_hostname, r_binddn, r_bindpw,
+                                      ldaps_only=False):
+        r_conn = ipaldap.LDAPClient.from_hostname_secure(
+            r_hostname, ldaps_only=ldaps_only)
         if r_bindpw:
             r_conn.simple_bind(r_binddn, r_bindpw)
         else:
@@ -1403,13 +1435,15 @@ class ReplicationManager:
         # change the agreements to use GSSAPI
         self.gssapi_update_agreements(self.conn, r_conn)
 
-    def setup_gssapi_replication(self, r_hostname, r_binddn=None, r_bindpw=None):
+    def setup_gssapi_replication(self, r_hostname, r_binddn=None, r_bindpw=None,
+                                ldaps_only=False):
         """
         Directly sets up GSSAPI replication.
         Only usable to connect 2 existing replicas (needs existing kerberos
         principals)
         """
-        r_conn = ipaldap.LDAPClient.from_hostname_secure(r_hostname)
+        r_conn = ipaldap.LDAPClient.from_hostname_secure(
+            r_hostname, ldaps_only=ldaps_only)
         if r_bindpw:
             r_conn.simple_bind(r_binddn, r_bindpw)
         else:
@@ -1419,8 +1453,10 @@ class ReplicationManager:
         self.setup_krb_princs_as_replica_binddns(self.conn, r_conn)
 
         # Create mutual replication agreementsausiung SASL/GSSAPI
-        self.setup_agreement(self.conn, r_hostname, isgssapi=True)
-        self.setup_agreement(r_conn, self.hostname, isgssapi=True)
+        self.setup_agreement(self.conn, r_hostname, isgssapi=True,
+                            ldaps_only=ldaps_only)
+        self.setup_agreement(r_conn, self.hostname, isgssapi=True,
+                            ldaps_only=ldaps_only)
 
     def initialize_replication(self, dn, conn):
         mod = [(ldap.MOD_ADD, 'nsds5BeginReplicaRefresh', 'start'),
@@ -1903,9 +1939,10 @@ class ReplicationManager:
         conn.update_entry(entry)
 
     def setup_promote_replication(self, r_hostname, r_binddn=None,
-                                  r_bindpw=None, cacert=paths.IPA_CA_CRT):
+                                  r_bindpw=None, cacert=paths.IPA_CA_CRT,
+                                  ldaps_only=False):
         r_conn = ipaldap.LDAPClient.from_hostname_secure(
-            r_hostname, cacert=cacert)
+            r_hostname, cacert=cacert, ldaps_only=ldaps_only)
         if r_bindpw:
             r_conn.simple_bind(r_binddn, r_bindpw)
         else:
@@ -1921,8 +1958,10 @@ class ReplicationManager:
         self.basic_replication_setup(r_conn, r_id, self.repl_man_dn, None)
         self.ensure_replication_managers(r_conn, r_hostname)
 
-        self.setup_agreement(r_conn, self.hostname, isgssapi=True)
-        self.setup_agreement(self.conn, r_hostname, isgssapi=True)
+        self.setup_agreement(r_conn, self.hostname, isgssapi=True,
+                            ldaps_only=ldaps_only)
+        self.setup_agreement(self.conn, r_hostname, isgssapi=True,
+                            ldaps_only=ldaps_only)
 
         # Finally start replication
         ret = self.start_replication(r_conn, master=False)
@@ -1942,8 +1981,10 @@ class CSReplicationManager(ReplicationManager):
     """
 
     def __init__(self, realm, hostname, dirman_passwd, port):
+        ldaps_only = (port == 636)
         super(CSReplicationManager, self).__init__(
-            realm, hostname, dirman_passwd, port, starttls=True)
+            realm, hostname, dirman_passwd, port, starttls=not ldaps_only,
+            ldaps_only=ldaps_only)
         self.db_suffix = DN(('o', 'ipaca'))
         self.hostnames = [] # set before calling or agreement_dn() will fail
 
@@ -1992,11 +2033,11 @@ class CSReplicationManager(ReplicationManager):
         dn = DN(('cn', self.db_suffix),
                 ('cn', 'mapping tree'), ('cn', 'config'))
         entry = self.conn.get_entry(dn)
+        proto = 'ldaps' if port == 636 else 'ldap'
         try:
-            # TODO: should we detect proto somehow ?
             entry['nsslapd-referral'].remove(
-                'ldap://%s/%s' %
-                (ipautil.format_netloc(hostname, port), self.db_suffix))
+                '%s://%s/%s' % (proto, ipautil.format_netloc(hostname, port),
+                                self.db_suffix))
             self.conn.update_entry(entry)
         except Exception as e:
             logger.debug("Failed to remove referral value: %s", e)
@@ -2015,15 +2056,12 @@ def get_cs_replication_manager(realm, host, dirman_passwd):
 
     Detects if the host has a merged database, connects to appropriate port.
     """
-
+    ldaps_only = getattr(api.env, 'ldaps_only', False)
     # Try merged database port first. If it has the ipaca tree, return
-    # corresponding replication manager
-    # If we can't connect to it at all, we're not dealing with an IPA master
-    # anyway; let the exception propagate up
-    # Fall back to the old PKI-only DS port. Check that it has the ipaca tree
+    # corresponding replication manager.
+    # When ldaps_only, DS is only on 636; otherwise try 389 then 7389.
     # (IPA with merged DB theoretically leaves port 7389 free for anyone).
-    # If it doesn't, raise exception.
-    ports = [389, 7389]
+    ports = [636, 7389] if ldaps_only else [389, 7389]
     for port in ports:
         logger.debug('Looking for PKI DS on %s:%s', host, port)
         replication_manager = CSReplicationManager(
@@ -2051,12 +2089,13 @@ class CAReplicationManager(ReplicationManager):
         self.db_suffix = DN(('o', 'ipaca'))
         self.agreement_name_format = "caTo%s"
 
-    def setup_cs_replication(self, r_hostname):
+    def setup_cs_replication(self, r_hostname, ldaps_only=False):
         """
         Assumes a promote replica with working GSSAPI for replication
         and unified DS instance.
         """
-        r_conn = ipaldap.LDAPClient.from_hostname_secure(r_hostname)
+        r_conn = ipaldap.LDAPClient.from_hostname_secure(
+            r_hostname, ldaps_only=ldaps_only)
         r_conn.gssapi_bind()
 
         # Setup the first half
@@ -2067,8 +2106,10 @@ class CAReplicationManager(ReplicationManager):
         r_id = self._get_replica_id(r_conn, r_conn)
         self.basic_replication_setup(r_conn, r_id, self.repl_man_dn, None)
 
-        self.setup_agreement(r_conn, self.hostname, isgssapi=True)
-        self.setup_agreement(self.conn, r_hostname, isgssapi=True)
+        self.setup_agreement(r_conn, self.hostname, isgssapi=True,
+                            ldaps_only=ldaps_only)
+        self.setup_agreement(self.conn, r_hostname, isgssapi=True,
+                            ldaps_only=ldaps_only)
 
         # Finally start replication
         ret = self.start_replication(r_conn, master=False)

@@ -90,6 +90,16 @@ class IPASystemRecords:
     # FIXME: use TTL from config
     TTL = 3600
 
+    def _get_master_srv_records(self):
+        """SRV records for IPA masters; use _ldaps._tcp:636 when ldaps_only."""
+        if getattr(self.api_instance.env, 'ldaps_only', False):
+            # LDAPS-only: no _ldap._tcp (389), add _ldaps._tcp (636) for discovery
+            return ((DNSName('_ldaps._tcp'), 636),) + tuple(
+                (name, port) for name, port in IPA_DEFAULT_MASTER_SRV_REC
+                if name != DNSName('_ldap._tcp')
+            )
+        return IPA_DEFAULT_MASTER_SRV_REC
+
     def __init__(self, api_instance, all_servers=False):
         self.api_instance = api_instance
         self.domain_abs = DNSName(self.api_instance.env.domain).make_absolute()
@@ -251,7 +261,7 @@ class IPASystemRecords:
             self.__add_srv_records(
                 zone_obj,
                 hostname_abs,
-                IPA_DEFAULT_MASTER_SRV_REC,
+                self._get_master_srv_records(),
                 weight=server['weight']
             )
             self.__add_uri_records(
@@ -305,7 +315,7 @@ class IPASystemRecords:
                 self.__add_srv_records(
                     zone_obj,
                     hostname_abs,
-                    IPA_DEFAULT_MASTER_SRV_REC,
+                    self._get_master_srv_records(),
                     weight=server['weight'],
                     priority=priority,
                     location=location
@@ -455,7 +465,7 @@ class IPASystemRecords:
         success = []
         names_requiring_cname_templates = set(
             rec[0].derelativize(self.domain_abs) for rec in (
-                IPA_DEFAULT_MASTER_SRV_REC
+                self._get_master_srv_records()
                 + IPA_DEFAULT_MASTER_URI_REC
                 + IPA_DEFAULT_KRB_TXT_REC
                 + IPA_DEFAULT_ADTRUST_SRV_REC
@@ -538,7 +548,7 @@ class IPASystemRecords:
         location = DNSName(location)
         loc_records = []
         for records in (
-                IPA_DEFAULT_MASTER_SRV_REC,
+                self._get_master_srv_records(),
                 IPA_DEFAULT_ADTRUST_SRV_REC,
                 IPA_DEFAULT_NTP_SRV_REC
         ):

@@ -384,6 +384,14 @@ class ServerInstallInterface(ServerCertificateInstallInterface,
     )
     dirsrv_config_file = enroll_only(dirsrv_config_file)
 
+    ldaps_only = knob(
+        None,
+        description="Configure Directory Server to listen only on LDAPS "
+                    "port 636 (no LDAP port 389). All components will use "
+                    "LDAPS to reach the directory.",
+        cli_names='--ldaps-only',
+    )
+
     skip_mem_check = knob(
         None,
         description="Skip checking for minimum required memory",

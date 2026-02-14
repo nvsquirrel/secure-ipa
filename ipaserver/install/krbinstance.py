@@ -436,9 +436,12 @@ class KrbInstance(service.Service):
     def _wait_for_replica_kdc_entry(self):
         master_dn = self.api.Object.server.get_dn(self.fqdn)
         kdc_dn = DN(('cn', 'KDC'), master_dn)
-        ldap_uri = ipaldap.get_ldap_uri(self.master_fqdn)
+        ldaps_only = getattr(api.env, 'ldaps_only', False)
+        ldap_uri = ipaldap.get_ldap_uri(
+            self.master_fqdn, ldaps_only=ldaps_only)
         with ipaldap.LDAPClient(
-                ldap_uri, cacert=paths.IPA_CA_CRT, start_tls=True
+                ldap_uri, cacert=paths.IPA_CA_CRT,
+                start_tls=not ldaps_only
         ) as remote_ldap:
             remote_ldap.gssapi_bind()
             replication.wait_for_entry(
