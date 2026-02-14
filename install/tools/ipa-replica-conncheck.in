@@ -176,6 +176,9 @@ def parse_options():
                       help="The hostname of this server (FQDN). "
                            "By default the result of getfqdn() call from "
                            "Python's socket module is used.")
+    common_group.add_option("", "--ldaps-only", dest="ldaps_only",
+                      action="store_true", default=False,
+                      help="Only check LDAPS port 636 (directory uses LDAPS only)")
     parser.add_option_group(common_group)
 
     parser.add_option("-d", "--debug", dest="debug",
@@ -427,7 +430,9 @@ def main():
 
     signal.signal(signal.SIGTERM, sigterm_handler)
 
-    required_ports = BASE_PORTS
+    required_ports = list(BASE_PORTS)
+    if getattr(options, 'ldaps_only', False):
+        required_ports = [p for p in required_ports if p.port != 389]
     if options.check_ca:
         # Check old Dogtag CA replication port
         # New installs with unified databases use main DS port (checked above)

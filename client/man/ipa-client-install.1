@@ -109,6 +109,9 @@ The hostname of this machine (FQDN). If specified, the hostname will be set and 
 \fB\-\-force\-join\fR
 Join the host even if it is already enrolled.
 .TP
+\fB\-\-ldaps\-only\fR
+Connect to the IPA server using LDAPS only (port 636). Use this when the server was installed with \fB\-\-ldaps\-only\fR. The client is configured with \fIldap_uri=ldaps://server:636\fR and does not use plain LDAP or STARTTLS.
+.TP
 \fB\-\-ntp\-server\fR=\fINTP_SERVER\fR
 Configure chronyd to use this NTP server. This option can be used multiple times and it is used to specify exactly one time server.
 .TP

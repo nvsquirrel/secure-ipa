@@ -1209,7 +1209,10 @@ def add_link(realm, replica1, replica2, dirman_passwd, options):
             else:
                 sys.exit("Connection to %s unsuccessful." % replica2)
 
-        repl1.setup_gssapi_replication(replica2, DN(('cn', 'Directory Manager')), dirman_passwd)
+        ldaps_only = getattr(api.env, 'ldaps_only', False)
+        repl1.setup_gssapi_replication(
+            replica2, DN(('cn', 'Directory Manager')), dirman_passwd,
+            ldaps_only=ldaps_only)
     print("Connected '%s' to '%s'" % (replica1, replica2))
 
 def re_initialize(realm, thishost, fromhost, dirman_passwd, nolookup=False):

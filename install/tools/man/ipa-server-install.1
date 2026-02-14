@@ -94,6 +94,9 @@ An unattended installation that will never prompt for user input.
 .TP
 \fB\-\-dirsrv\-config\-file\fR
 The path to LDIF file that will be used to modify configuration of dse.ldif during installation of the directory server instance.
+.TP
+\fB\-\-ldaps\-only\fR
+Configure the Directory Server to listen only on port 636 (LDAPS). No LDAP (389) or STARTTLS listener is created. All components (replication, Dogtag CA/KRA, clients) use LDAPS to communicate with the directory. The \fI_ldap._tcp\fR DNS SRV record is not published when this option is used.
 
 .SS "CERTIFICATE SYSTEM OPTIONS"
 .TP

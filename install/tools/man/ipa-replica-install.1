@@ -98,6 +98,9 @@ Configure SSSD as data source for subid.
 \fB\-\-skip\-conncheck\fR
 Skip connection check to remote master
 .TP
+\fB\-\-ldaps\-only\fR
+Use LDAPS only (port 636) to communicate with the master and for replication. The master must have been installed with \fB\-\-ldaps\-only\fR. No LDAP (389) or STARTTLS is used. The replica's directory server will also listen only on port 636.
+.TP
 \fB\-\-skip\-mem\-check\fR
 Skip checking for minimum required memory
 .TP

@@ -123,7 +123,10 @@ The maximum number of entries cached if ldap_cache is True. Since this cache is 
 Log details on hits, misses, etc. for the LDAP cache if the cache is enabled.
 .TP
 .B ldap_uri <URI>
-Specifies the URI of the IPA LDAP server to connect to. The URI scheme may be one of \fBldap\fR or \fBldapi\fR. The default is to use ldapi, e.g. ldapi://%2fvar%2frun%2fslapd\-EXAMPLE\-COM.socket
+Specifies the URI of the IPA LDAP server to connect to. The URI scheme may be one of \fBldap\fR, \fBldaps\fR or \fBldapi\fR. The default is to use ldapi, e.g. ldapi://%2fvar%2frun%2fslapd\-EXAMPLE\-COM.socket. When \fBldaps_only\fR is True, the default is ldaps://server:636.
+.TP
+.B ldaps_only <boolean>
+When True, the server or client uses LDAPS only (port 636). No LDAP (port 389) or STARTTLS is used. Set automatically by \fBipa-server-install\fR and \fBipa-replica-install\fR when \fB--ldaps-only\fR is used, and by \fBipa-client-install\fR when \fB--ldaps-only\fR is used. Clients connecting to an LDAPS-only server must use this option or specify \fBldap_uri=ldaps://server:636\fR.
 .TP
 .B log_logger_XXX <comma separated list of regexps>
 loggers matching regexp will be assigned XXX level.
