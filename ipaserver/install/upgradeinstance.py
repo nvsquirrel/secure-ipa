@@ -86,9 +86,9 @@ class IPAUpgrade(service.Service):
         """
 
         ext = ''
-        rand = random.Random()
+        rand = random.SystemRandom()
         for _i in range(8):
-            h = "%02x" % rand.randint(0,255)
+            h = "%02x" % rand.randint(0, 255)
             ext += h
         super(IPAUpgrade, self).__init__("dirsrv", realm_name=realm_name)
         serverid = ipaldap.realm_to_serverid(realm_name)

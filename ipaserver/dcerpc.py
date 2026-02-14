@@ -43,8 +43,8 @@ from ipaserver.dcerpc_common import (TRUST_BIDIRECTIONAL,
 from ipalib.util import normalize_name
 
 import os
+import secrets
 import struct
-import random
 
 from samba import param
 from samba import credentials
@@ -1057,9 +1057,8 @@ class TrustDomainInstance:
             # Samba Python bindings with no support for FIPS wrapper
             # We have to generate AuthInfo ourselves which means
             # we have to use RC4 encryption directly
-            confounder = [3] * 512
-            for i in range(512):
-                confounder[i] = random.randint(0, 255)
+            # Use cryptographically secure random for the confounder
+            confounder = list(secrets.token_bytes(512))
 
             trustpass = drsblobs.trustDomainPasswords()
             trustpass.confounder = confounder

@@ -68,7 +68,7 @@ class FileStore:
         self._path = path
         self._index = os.path.join(self._path, index_file)
 
-        self.random = random.Random()
+        self.random = random.SystemRandom()
 
         self.files = {}
         self._load()
