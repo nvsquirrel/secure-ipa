@@ -312,14 +312,30 @@ def suffix_to_realm(suffix_dn):
     realm = '.'.join([x.value for x in suffix_dn])
     return realm
 
+# Safe character set for template eval(): only arithmetic, no code execution
+_TEMPLATE_EVAL_SAFE_CHARS = set('0123456789+-*/.() \t\n\r')
+
+
 def template_str(txt, vars):
     val = string.Template(txt).substitute(vars)
 
     # eval() is a special string one can insert into a template to have the
     # Python interpreter evaluate the string. This is intended to allow
-    # math to be performed in templates.
+    # math to be performed in templates. For security, only allow a strict
+    # subset of characters (digits, arithmetic operators, parentheses);
+    # reject any expression that could execute code.
     pattern = re.compile(r'(eval\s*\(([^()]*)\))')
-    val = pattern.sub(lambda x: str(eval(x.group(2))), val)
+
+    def _safe_eval(match):
+        inner = match.group(2).strip()
+        if not inner or not all(c in _TEMPLATE_EVAL_SAFE_CHARS for c in inner):
+            return match.group(0)  # leave unchanged if not safe
+        try:
+            return str(eval(inner))
+        except Exception:
+            return match.group(0)
+
+    val = pattern.sub(_safe_eval, val)
 
     return val
 
